@@ -1,4 +1,4 @@
-# MeloX Android
+# MeloX Android（弥乐）
 
 [中文](README.zh-Hans.md)
 
