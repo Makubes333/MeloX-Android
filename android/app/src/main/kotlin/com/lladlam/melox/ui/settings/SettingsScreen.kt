@@ -278,12 +278,16 @@ fun SettingsScreen(
         if (session.isLoggedIn) session.refreshProfile()
     }
 
+    // The detail page must be back at progress 0 when it next opens. Resetting it right
+    // after `route = null` re-rendered the retained page at the centre and slid it out a
+    // second time while the exit animation was still running (the "back twice" report),
+    // so reset on open instead.
+    LaunchedEffect(route) { if (route != null) backProgress.snapTo(0f) }
     PredictiveBackHandler(enabled = route != null) {
         try {
             it.collect { event -> backProgress.snapTo(event.progress) }
             backProgress.animateTo(1f, tween(160))
             route = null
-            backProgress.snapTo(0f)
         } catch (_: CancellationException) {
             backProgress.animateTo(0f)
         }

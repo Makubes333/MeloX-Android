@@ -98,6 +98,7 @@ import com.lladlam.melox.core.music.provider.UserLibraryCapability
 import com.lladlam.melox.core.recommendation.LocalRecommendationStore
 import com.lladlam.melox.playback.PlaybackCommands
 import com.lladlam.melox.playback.ProviderPlaybackCommands
+import com.lladlam.melox.ui.PlaylistDetailChromeEffect
 import com.lladlam.melox.ui.animation.MeloXMotion
 import com.lladlam.melox.ui.animation.meloXPageEnter
 import com.lladlam.melox.ui.animation.meloXPageExit
@@ -533,6 +534,11 @@ private fun HomeOverlayPage(
     // 接到同一个 SharedTransitionLayout 里的列表卡片上（一镜到底）。
     content: @Composable AnimatedVisibilityScope.() -> Unit,
 ) {
+    PlaylistDetailChromeEffect(
+        open = shown,
+        enterMillis = MeloXMotion.PageEnterMillis,
+        exitMillis = MeloXMotion.PageExitMillis,
+    )
     val progress = remember { Animatable(0f) }
     // 手势返回走完后 progress 停在 1（页面已滑出屏外）。下一次进入必须归零，
     // 否则新页面会带着满位移进来、永远停在屏幕右侧外面。

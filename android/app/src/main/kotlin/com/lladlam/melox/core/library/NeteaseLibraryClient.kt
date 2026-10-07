@@ -31,6 +31,12 @@ class NeteaseLibraryClient(
         val playlists = allPlaylists
         val likedIds = likedSongIdsBlocking(userId)
         val likedById = likedIds.chunked(100).flatMap(::songDetailsBlocking).associateBy(SearchSong::id)
+        // A transient failure in the song-detail request comes back as an empty payload.
+        // Never report "no favorites" when the id list says otherwise, or the caller would
+        // cache the empty result and the user's favorites would vanish.
+        if (likedIds.isNotEmpty() && likedById.isEmpty()) {
+            throw IOException("liked song details unavailable")
+        }
         val liked = likedIds.mapNotNull(likedById::get)
         val recent = recentSongsBlocking(100)
         NeteaseLibrarySnapshot(playlists = playlists, likedSongs = liked, recentSongs = recent, likedPlaylistId = likedPlaylistId)
@@ -258,7 +264,8 @@ class NeteaseLibraryClient(
             data = JSONObject().put("uid", userId),
             authenticated = true,
         )
-        val ids = response.optJSONArray("ids") ?: JSONArray()
+        val ids = response.optJSONArray("ids")
+            ?: throw IOException("like/get rejected (code ${response.optInt("code", -1)})")
         return buildList(ids.length()) {
             for (index in 0 until ids.length()) {
                 ids.optLong(index).takeIf { it > 0L }?.let(::add)
