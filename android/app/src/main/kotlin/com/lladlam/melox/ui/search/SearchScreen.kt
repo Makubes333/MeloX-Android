@@ -99,6 +99,7 @@ import com.lladlam.melox.playback.ProviderPlaybackCommands
 import com.lladlam.melox.ui.MeloXBottomContentClearance
 import com.lladlam.melox.ui.account.MeloXAccountActivity
 import com.lladlam.melox.ui.collection.MeloXCollectionDetailActivity
+import com.lladlam.melox.ui.PlaylistDetailChromeEffect
 import com.lladlam.melox.ui.glass.MeloXGlassButton
 import com.lladlam.melox.ui.glass.MeloXGlassButtonStyle
 import com.lladlam.melox.ui.glass.MeloXGlassTextField
@@ -517,6 +518,11 @@ fun SearchScreen(
     // 网易云专辑/歌手/播客打开的是另一个 Activity（共享元素不能跨 Activity 配对），
     // provider 歌手详情没有 hero 封面 —— 都不在此列，改走下面的整页子页面层。
     val overlayDestination = selectedDetail?.takeIf { it.hasHeroOverlay() }
+    PlaylistDetailChromeEffect(
+        open = selectedDetail?.kind == MeloXSearchKind.Playlists,
+        enterMillis = MeloXMotion.PageEnterMillis,
+        exitMillis = MeloXMotion.PageExitMillis,
+    )
     // 整页子页面是否展开（实时可见性；内容在 subPageContent 那一侧保留）。
     val subPageOpen = podcastDiscovery ||
         (categoryTitle != null) ||

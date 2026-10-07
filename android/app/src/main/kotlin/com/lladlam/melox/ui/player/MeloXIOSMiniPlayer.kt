@@ -79,6 +79,8 @@ import com.lladlam.melox.playback.MeloXAudioReactiveRuntime
 import com.lladlam.melox.playback.MeloXAudioReactiveSample
 import com.lladlam.melox.ui.settings.MeloXSettingsRuntime
 
+internal val MeloXMiniPlayerHeight = 48.dp
+
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun MeloXIOSMiniPlayer(
@@ -246,7 +248,7 @@ fun MeloXIOSMiniPlayer(
     // 播放栏高度固定 48dp，与底栏收缩态的两侧按钮/搜索键完全等高。
     // 之前用 lerpDp(45,48) 且外层 Box 未定高，会随 compact 与 sharedBounds
     // 测量出更高/更矮的玻璃壳；这里统一钉死 48dp。
-    val miniHeight = 48.dp
+    val miniHeight = MeloXMiniPlayerHeight
 
     Box(
         modifier = Modifier

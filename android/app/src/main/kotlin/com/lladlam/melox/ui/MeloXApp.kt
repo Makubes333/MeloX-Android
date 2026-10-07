@@ -27,6 +27,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.rememberTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -46,6 +47,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -163,6 +165,7 @@ import com.lladlam.melox.ui.glass.publicdemo.PublicDampedDragAnimation
 import com.lladlam.melox.ui.glass.publicdemo.PublicInteractiveHighlight
 import com.lladlam.melox.ui.player.MeloXImmersivePlaybackEffect
 import com.lladlam.melox.ui.player.MeloXIOSMiniPlayer
+import com.lladlam.melox.ui.player.MeloXMiniPlayerHeight
 import com.lladlam.melox.ui.player.MeloXProviderLyricsLoader
 import com.lladlam.melox.ui.player.MeloXIOSNowPlayingSharedHost
 import com.lladlam.melox.ui.player.meloXPlayerTransitionDurationMillis
@@ -185,6 +188,7 @@ import com.lladlam.melox.core.update.MeloXRelease
 import com.lladlam.melox.core.update.MeloXUpdateClient
 import com.lladlam.melox.playback.PlaybackCommands
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -234,6 +238,21 @@ fun MeloXApp(
     var loginReturnTab by remember { mutableStateOf(AppTab.Settings) }
     var tabBarMinimized by rememberSaveable { mutableStateOf(false) }
     var scrollAccumulator by remember { mutableFloatStateOf(0f) }
+    // A playlist / collection detail page asks the dock to slide away and keep only the long
+    // mini player. Scrolling must not bring the compact bar back while it is open.
+    val dockHidden = MeloXChromeRuntime.playlistDetailOpen
+    var dockTransitionActive by remember { mutableStateOf(false) }
+    val dockScrollLocked by rememberUpdatedState(dockHidden || dockTransitionActive)
+    LaunchedEffect(dockHidden) {
+        scrollAccumulator = 0f
+        if (dockHidden) {
+            dockTransitionActive = true
+            tabBarMinimized = false
+        } else if (dockTransitionActive) {
+            delay(MeloXChromeRuntime.transitionMillis.toLong())
+            dockTransitionActive = false
+        }
+    }
     val haptics = LocalHapticFeedback.current
     LaunchedEffect(tabBarMinimized) {
         if (com.lladlam.melox.ui.settings.MeloXSettingsRuntime.hapticFeedbackEnabled)
@@ -336,6 +355,12 @@ fun MeloXApp(
                 source: NestedScrollSource,
             ): Offset {
                 if (source != NestedScrollSource.UserInput) return Offset.Zero
+                // While a playlist detail page owns the dock, scroll must never reveal the
+                // compact bar or the tabs.
+                if (dockScrollLocked) {
+                    scrollAccumulator = 0f
+                    return Offset.Zero
+                }
                 if (MeloXSettingsRuntime.disableAutomaticTabBarShrink) {
                     scrollAccumulator = 0f
                     return Offset.Zero
@@ -652,11 +677,14 @@ fun MeloXApp(
                     selectedTab = selectedTab,
                     source = selectedSource,
                     onSelect = { tab ->
-                        tabBarMinimized = false
-                        selectedTab = tab
+                        if (!dockScrollLocked) {
+                            tabBarMinimized = false
+                            selectedTab = tab
+                        }
                     },
                     hasMedia = playbackState.hasMedia,
-                    minimized = tabBarMinimized,
+                    minimized = tabBarMinimized && !dockHidden,
+                    hidden = dockHidden,
                     visibleRootTabs = visibleRootTabs,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -974,11 +1002,21 @@ private fun MeloXBottomChrome(
     hasMedia: Boolean,
     minimized: Boolean,
     visibleRootTabs: List<AppTab>,
+    hidden: Boolean = false,
     modifier: Modifier = Modifier,
     miniPlayer: @Composable (compactProgress: Float) -> Unit,
 ) {
     val tabsBackdrop = rememberLayerBackdrop()
     val dockScope = rememberCoroutineScope()
+    val playlistMotion = tween<Float>(
+        durationMillis = MeloXChromeRuntime.transitionMillis,
+        easing = FastOutSlowInEasing,
+    )
+    val hiddenProgress by animateFloatAsState(
+        targetValue = if (hidden) 1f else 0f,
+        animationSpec = playlistMotion,
+        label = "melox-chrome-hidden",
+    )
     val rawProgress by animateFloatAsState(
         targetValue = if (minimized) 1f else 0f,
         // 展开 / 收缩各用**一条完整弹簧**（方向不同、手感不同）：
@@ -988,7 +1026,8 @@ private fun MeloXBottomChrome(
         // ⚠ 别让两个方向共用 spec：共用时保护邻居只剩「对展开方向事后压缩」一条路，
         //   而压缩后的曲线不再是弹簧（阻尼包络仍是 0.30 的），手感与收缩方向不对等。
         //   target 与 spec 在同一帧一起算 —— 方向就是 targetValue 本身。
-        animationSpec = if (minimized) BottomBarCollapseSpec else BottomBarExpandSpec,
+        animationSpec = if (hidden || hiddenProgress > 0f) playlistMotion
+            else if (minimized) BottomBarCollapseSpec else BottomBarExpandSpec,
         label = "melox-tab-minimize-progress",
     )
     // 语义值（alpha / 图层门控 / 选中态判定）必须夹在 [0,1]，否则负 alpha 会炸。
@@ -1002,6 +1041,20 @@ private fun MeloXBottomChrome(
     val dropStage = smoothStep(progress, 0.78f, 1.00f)    // 容器高度，不参与过冲
 
     val navHeight = lerpDpBouncy(ChromeExpandedSize, ChromeCompactSize, bounceFrac)
+    // Capture the dock's top edge before it moves, including entry from the compact state.
+    // Both bars are bottom-aligned to the same baseline. A 48dp MiniPlay therefore needs a
+    // lift of (captured dock height - 48dp) to put its top exactly on that original edge.
+    var playlistAnchorHeight by remember { mutableStateOf(navHeight) }
+    DisposableEffect(hidden) {
+        if (hidden) playlistAnchorHeight = navHeight
+        onDispose { }
+    }
+    val navigationBottom = with(LocalDensity.current) {
+        WindowInsets.navigationBars.getBottom(this).toDp()
+    }
+    // Travel past the physical window bottom, not just the dock's content baseline. The
+    // extra margin also clears the glass shadow, in gesture and three-button navigation.
+    val dockExitDistance = ChromeExpandedSize + navigationBottom + 8.dp + 24.dp
     // ⚠ f 的**负方向**才是「展开外扩」（f=0 是展开稳态、f=1 是收缩稳态）。
     // 这里只夹下界：搜索键右对齐，若跟着外扩会吃掉与 nav 之间的固有间隙，
     // 而它自身的外扩量只有 0.9dp、肉眼不可见 —— 整段间隙留给 nav 的过冲更划算。
@@ -1030,8 +1083,7 @@ private fun MeloXBottomChrome(
         modifier = modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            // Mei keeps the 64dp navigation capsule 8dp above the gesture
-            // inset, giving the dock the same breathing room as iOS.
+            // Keep the dock 8dp above the system navigation inset.
             .padding(bottom = 8.dp),
     ) {
         BoxWithConstraints(
@@ -1080,6 +1132,17 @@ private fun MeloXBottomChrome(
             // 实测播放栏整体比按钮高 1dp（top/bottom 各差 4px），
             // 这里随收缩进度补一个 1dp 下移，把两者垂直中心压平。
             val miniCenterAlignNudge = lerpDpBouncy(0.dp, 1.dp, bounceFrac) * mediaReveal
+            val miniOffsetY by animateDpAsState(
+                targetValue = if (hidden) MeloXMiniPlayerHeight - playlistAnchorHeight
+                    else -miniLift + miniCenterAlignNudge,
+                // The playlist move is independent of the width morph. Entering from a
+                // compact dock must not first lift MiniPlay and then drop it back down.
+                animationSpec = if (hidden || hiddenProgress > 0f) tween(
+                    durationMillis = MeloXChromeRuntime.transitionMillis,
+                    easing = FastOutSlowInEasing,
+                ) else snap(),
+                label = "melox-playlist-mini-position",
+            )
 
             if (hasMedia) {
                 Box(
@@ -1087,9 +1150,10 @@ private fun MeloXBottomChrome(
                         .align(Alignment.BottomStart)
                         .offset(
                             x = miniWrapperX,
-                            y = -miniLift + miniCenterAlignNudge,
+                            y = miniOffsetY,
                         )
-                        .width(miniWrapperWidth),
+                        .width(miniWrapperWidth)
+                        .zIndex(1f),
                 ) {
                     miniPlayer(progress)
                 }
@@ -1149,9 +1213,14 @@ private fun MeloXBottomChrome(
             BoxWithConstraints(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .offset(x = navOffsetX, y = 0.dp)
+                    .offset(x = navOffsetX)
                     .width(navWidth)
-                    .height(navHeight),
+                    .height(navHeight)
+                    .graphicsLayer {
+                        translationY = dockExitDistance.toPx() * hiddenProgress
+                        alpha = if (hiddenProgress >= 1f) 0f else 1f
+                    }
+                    .then(if (hidden) Modifier.clearAndSetSemantics { } else Modifier),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 val density = LocalDensity.current
@@ -1503,8 +1572,13 @@ private fun MeloXBottomChrome(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .offset(x = -horizontalMargin, y = 0.dp)
+                    .offset(x = -horizontalMargin)
                     .size(searchSize)
+                    .then(if (hidden) Modifier.clearAndSetSemantics { } else Modifier)
+                    .graphicsLayer {
+                        translationY = dockExitDistance.toPx() * hiddenProgress
+                        alpha = if (hiddenProgress >= 1f) 0f else 1f
+                    }
                     // 搜索键材质与底栏 nav 胶囊完全同源：同样走
                     // meloXLiquidBottomBar（vibrancy + blur + lens，且只叠
                     // surfaceColor、不额外加 Screen 白纱与 Hue tint），
@@ -1515,7 +1589,7 @@ private fun MeloXBottomChrome(
                         surfaceColor = bottomGlassSurfaceColor(),
                         refractionHeight = lerpDp(10.dp, 8.dp, bounceFrac),
                     )
-                    .clickable(role = Role.Button) { onSelect(AppTab.Search) }
+                    .clickable(enabled = !hidden, role = Role.Button) { onSelect(AppTab.Search) }
                     .semantics {
                         contentDescription = searchContentDescription
                     },

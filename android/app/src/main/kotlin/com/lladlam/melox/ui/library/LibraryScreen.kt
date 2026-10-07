@@ -127,6 +127,7 @@ import com.lladlam.melox.core.network.NeteaseCollectionDetailsClient
 import com.lladlam.melox.core.network.NeteaseSearchClient
 import com.lladlam.melox.playback.PlaybackCommands
 import com.lladlam.melox.ui.MeloXBottomContentClearance
+import com.lladlam.melox.ui.PlaylistDetailChromeEffect
 import com.lladlam.melox.ui.glass.meloXLiquidBottomBar
 import com.lladlam.melox.ui.glass.MeloXActionIcon
 import com.lladlam.melox.ui.glass.MeloXSwipeAction
@@ -240,6 +241,9 @@ fun LibraryScreen(
     var providerAccount by remember(source) { mutableStateOf<MusicAccountSummary?>(null) }
     var loading by remember(source, session.cookie) { mutableStateOf(source != MusicSource.Netease) }
     var errorMessage by remember(source, session.cookie) { mutableStateOf<String?>(null) }
+    // While a playlist detail page is the top page, the dock slides away and keeps only the
+    // long mini player.
+    PlaylistDetailChromeEffect(selectedPlaylist != null)
     val playlistListState = rememberLazyListState()
 
     suspend fun refreshLibrary() {
@@ -257,9 +261,18 @@ fun LibraryScreen(
                 return
             }
             runCatching { client.snapshot(userId) }
-                .onSuccess {
-                    snapshot = it
-                    cache.saveSnapshot(userId, it)
+                .onSuccess { fresh ->
+                    // A transient failure can still come back as an empty liked list; never
+                    // let it replace a populated cache, or the user's favorites vanish until
+                    // the next successful refresh.
+                    val previous = snapshot
+                    val merged = if (fresh.likedSongs.isEmpty() && !previous?.likedSongs.isNullOrEmpty()) {
+                        fresh.copy(likedSongs = previous.likedSongs)
+                    } else {
+                        fresh
+                    }
+                    snapshot = merged
+                    cache.saveSnapshot(userId, merged)
                 }
                 .onFailure { errorMessage = it.message ?: appContext.getString(R.string.library_load_failed) }
         } else {
@@ -620,6 +633,7 @@ private fun MeloXLibraryDownloadsPage(downloads: MeloXDownloadStore) {
     val providerDownloads = remember(context) { MeloXProviderDownloadStore.get(context) }
     var page by remember { mutableStateOf(MeloXDownloadsPage.Root) }
     var selectedPlaylistId by remember { mutableStateOf<Long?>(null) }
+    PlaylistDetailChromeEffect(page == MeloXDownloadsPage.PlaylistDetail)
     var selecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var browseMode by remember { mutableStateOf(MeloXLocalBrowseMode.Songs) }
